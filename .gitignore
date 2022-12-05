@@ -1,14 +1,16 @@
-# Fuck you
+# Everything else
 *
 
-# Derivative's fabulous libraries
-CHOP_CPlusPlusBase.h
-CPlusPlus_Common.h
-GL_Extensions.h
+# Usefull crap
+!*.cpp
+!*.h
 
-# My crap
-NDI_CameraControl_CHOP.cpp
-NDI_CameraControl_CHOP.h
+# Meaningful crap
+!README.md
 
+# VS Crap
+!*.sln
+!*.vcxproj
+
+# git crap
 .gitignore
-README.md

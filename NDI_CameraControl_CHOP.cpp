@@ -32,20 +32,17 @@ extern "C"
 		// The opType is the unique name for this CHOP. It must start with a 
 		// capital A-Z character, and all the following characters must lower case
 		// or numbers (a-z, 0-9)
-		info->customOPInfo.opType->setString("Customsignal");
+		info->customOPInfo.opType->setString("Ndicameracontroller");
 
 		// The opLabel is the text that will show up in the OP Create Dialog
-		info->customOPInfo.opLabel->setString("Custom Signal");
+		info->customOPInfo.opLabel->setString("NDI Camera Controller");
 
 		// Information about the author of this OP
-		info->customOPInfo.authorName->setString("Author Name");
-		info->customOPInfo.authorEmail->setString("email@email.com");
+		info->customOPInfo.authorName->setString("Kostiantyn Yerokhin");
+		info->customOPInfo.authorEmail->setString("kostya29erohin@gmail.com");
 
-		// This CHOP can work with 0 inputs
 		info->customOPInfo.minInputs = 0;
-
-		// It can accept up to 1 input though, which changes it's behavior
-		info->customOPInfo.maxInputs = 1;
+		info->customOPInfo.maxInputs = 0;
 	}
 
 	DLLEXPORT
@@ -69,13 +66,16 @@ extern "C"
 
 };
 
-// Camera PTZ values will be initialized after first &::execute cycle
+// Camera PTZ values will be initialized after first &::execute run
 NDI_CameraControl_CHOP::NDI_CameraControl_CHOP(const OP_NodeInfo* info) : myNodeInfo(info)
 {
 	myExecuteCount = 0;
 	myOffset = 0.0;
 
 	pNDI_find = NDIlib_find_create_v2();
+
+	memset(source_names, 0, sizeof(source_names));
+	memset(source_ips, 0, sizeof(source_ips));
 
 
 	if (!NDIlib_initialize()) {
@@ -84,32 +84,7 @@ NDI_CameraControl_CHOP::NDI_CameraControl_CHOP(const OP_NodeInfo* info) : myNode
 		// NDIlib_is_supported_CPU()
 		printf("Cannot run NDI.\n");
 	}
-
-	{
-		if (!NDIlib_find_wait_for_sources(pNDI_find, 1000 /* milliseconds */)) {
-			printf("No change to the sources found.\n");
-		}
-
-		// Get the updated list of sources
-		uint32_t no_sources = 0;
-		p_sources = NDIlib_find_get_current_sources(pNDI_find, &no_sources);
-
-		
-		NDI_recv_create_desc.source_to_connect_to = p_sources[0];
-		NDI_recv_create_desc.p_ndi_recv_name = "TD->NDI Camera Controller";
-		pNDI_recv = NDIlib_recv_create_v3(&NDI_recv_create_desc);
-		if (!pNDI_recv) {
-			printf("Error connecting to NDI source\n");
-		}
-
-		// Display all the sources.
-		printf("Network sources (%u found).\n", no_sources);
-		for (uint32_t i = 0; i < no_sources; i++) {
-			printf("%u. %s\t\t", i + 1, p_sources[i].p_ndi_name);
-			printf("%s\n", p_sources[i].p_url_address);
-
-		}
-	}
+	UpdateSources();
 }
 
 NDI_CameraControl_CHOP::~NDI_CameraControl_CHOP()
@@ -168,19 +143,28 @@ NDI_CameraControl_CHOP::execute(CHOP_Output* output,
 	void* reserved)
 {
 	myExecuteCount++;
-	
-	inputs->enablePar("Cameraip", 1);
+
+	inputs->enablePar("Availablesources", 1);
 	inputs->enablePar("Abspan", 1);
 	inputs->enablePar("Abstilt", 1);
 	inputs->enablePar("Abszoom", 1);
 	inputs->enablePar("Absfocus", 1);
 
-	const char* camera_ip = inputs->getParString("Cameraip");
+	const char* selected_id = inputs->getParString("Availablesources");
 	double abs_pan_new = inputs->getParDouble("Abspan");
 	double abs_tilt_new = inputs->getParDouble("Abstilt");
 	double abs_zoom_new = inputs->getParDouble("Abszoom");
 	double abs_focus_new = inputs->getParDouble("Absfocus");
+
+	if ((char*)selected_id != selected_id_old) {
+		selected_id_old = (char*)selected_id;
+		ConnectByURL(selected_id);
+		printf("Selected source changed\n");
+		printf("Connecting to camera at %s\n", selected_id);
+
+	}
 	
+
 	{
 
 		if (abs_pan != abs_pan_new || abs_tilt != abs_tilt_new) {
@@ -204,7 +188,7 @@ NDI_CameraControl_CHOP::execute(CHOP_Output* output,
 		output->channels[2][0] = abs_zoom;
 		output->channels[3][0] = abs_focus;
 	}
-	
+
 }
 
 int32_t
@@ -289,16 +273,20 @@ NDI_CameraControl_CHOP::getInfoDATEntries(int32_t index,
 void
 NDI_CameraControl_CHOP::setupParameters(OP_ParameterManager* manager, void* reserved1)
 {
-	// Currently useless
 	{
 		OP_StringParameter sp;
 
-		sp.name = "Cameraip";
-		sp.label = "Camera IP";
+		sp.name = "Availablesources";
+		sp.label = "Avalable Sources";
 
-		sp.defaultValue = "127.0.0.1";
+		sp.defaultValue = "None";
 
-		OP_ParAppendResult res = manager->appendString(sp);
+		int num_of_sources = 0;
+		for (int i = 0; source_names[i] != 0; i++) {
+			num_of_sources++;
+		}
+
+		OP_ParAppendResult res = manager->appendStringMenu(sp, num_of_sources, source_ips, source_names);
 		assert(res == OP_ParAppendResult::Success);
 	}
 
@@ -356,14 +344,73 @@ NDI_CameraControl_CHOP::setupParameters(OP_ParameterManager* manager, void* rese
 		OP_ParAppendResult res = manager->appendFloat(np);
 		assert(res == OP_ParAppendResult::Success);
 	}
+
+	{
+		OP_NumericParameter np;
+
+		np.name = "Updatesources";
+		np.label = "Update Sources";
+
+		np.defaultValues[0] = 0;
+
+		OP_ParAppendResult res = manager->appendPulse(np);
+		assert(res == OP_ParAppendResult::Success);
+	}
+
 }
 
 void
 NDI_CameraControl_CHOP::pulsePressed(const char* name, void* reserved1)
 {
-	if (!strcmp(name, "Reset"))
-	{
-		myOffset = 0.0;
+	if (!strcmp(name, "Updatesources")) {
+		UpdateSources();
+	}
+}
+
+void
+NDI_CameraControl_CHOP::UpdateSources() {
+	if (!NDIlib_find_wait_for_sources(pNDI_find, 1000 /* milliseconds */)) {
+		printf("No change to the sources found.\n");
+	}
+
+	// Get the updated list of sources
+	uint32_t no_sources = 0;
+	p_sources = NDIlib_find_get_current_sources(pNDI_find, &no_sources);
+
+	// Display all the sources.
+	printf("Network sources (%u found).\n", no_sources);
+	for (uint32_t i = 0; i < no_sources; i++) {
+
+		source_ips[i] = p_sources[i].p_url_address;
+		source_names[i] = p_sources[i].p_ndi_name;
+
+		printf("%u. %s\t\t", i + 1, p_sources[i].p_ndi_name);
+		printf("%s\n", p_sources[i].p_url_address);
+
+	}
+}
+
+void NDI_CameraControl_CHOP::ConnectByURL(const char* camera_url) {
+	NDIlib_source_t ndi_source = {"Custom source", camera_url};
+	NDIlib_source_t* p_ndi_source = &ndi_source;
+
+	NDI_recv_create_desc.source_to_connect_to = ndi_source;
+	NDI_recv_create_desc.p_ndi_recv_name = "TD->NDI Camera Controller";
+	pNDI_recv = NDIlib_recv_create_v3(&NDI_recv_create_desc);
+	if (!pNDI_recv) {
+		printf("Error connecting to NDI source\n");
+	}
+}
+
+void NDI_CameraControl_CHOP::ConnectByID(int id) {
+	
+	UpdateSources();
+
+	NDI_recv_create_desc.source_to_connect_to = p_sources[id];
+	NDI_recv_create_desc.p_ndi_recv_name = "TD->NDI Camera Controller made by Kostiantyn Yerokhin";
+	pNDI_recv = NDIlib_recv_create_v3(&NDI_recv_create_desc);
+	if (!pNDI_recv) {
+		printf("Error connecting to NDI source\n");
 	}
 }
 

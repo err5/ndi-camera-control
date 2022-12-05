@@ -79,6 +79,10 @@ public:
 	virtual void		setupParameters(OP_ParameterManager* manager, void* reserved1) override;
 	virtual void		pulsePressed(const char* name, void* reserved1) override;
 
+	virtual void NDI_CameraControl_CHOP::UpdateSources();
+	virtual void NDI_CameraControl_CHOP::ConnectByURL(const char* camera_url);
+	virtual void NDI_CameraControl_CHOP::ConnectByID(int ID);
+
 	// NDI Finder
 private:
 
@@ -98,6 +102,13 @@ private:
 	NDIlib_find_instance_t pNDI_find;
 	NDIlib_recv_create_v3_t NDI_recv_create_desc;
 	NDIlib_recv_instance_t pNDI_recv;
+
+	// list of all NDI source names & ips 
+	// array size is arbitrary
+	const char* source_names[256];
+	const char* source_ips[256];
+
+	char* selected_id_old = 0;
 
 	// Camera data
 	double abs_pan;
