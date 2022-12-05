@@ -8,5 +8,3 @@
 
 _Still pretty crappy & probably requires some fixes._
 __Use at your own risk!__
-
-In TODO list are full camera controls
