@@ -8,3 +8,7 @@
 
 _Still pretty crappy & probably requires some fixes._
 __Use at your own risk!__
+
+### Dependencies
+**NDI 5 SDK**
+**TouchDesigner 2021+**
