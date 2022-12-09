@@ -48,6 +48,21 @@ of the input will get used.
 If no input is connected then the node will output a smooth sine wave at 120hz.
 */
 
+struct CameraData {
+	double abs_pan;
+	double abs_tilt;
+	double abs_zoom;
+	double abs_focus;
+
+	double speed_pan;
+	double speed_tilt;
+	double speed_zoom;
+	double speed_focus;
+
+	double gain;
+	double iris;
+	double shutter_speed;
+};
 
 // To get more help about these functions, look at CHOP_CPlusPlusBase.h
 class NDI_CameraControl_CHOP : public CHOP_CPlusPlusBase
@@ -110,9 +125,6 @@ private:
 
 	char* selected_id_old = 0;
 
-	// Camera data
-	double abs_pan;
-	double abs_tilt;
-	double abs_zoom;
-	double abs_focus;
+	CameraData cam_data = {};
+
 };

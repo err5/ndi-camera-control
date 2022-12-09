@@ -21,7 +21,6 @@
 
 extern "C"
 {
-
 	DLLEXPORT
 		void
 		FillCHOPPluginInfo(CHOP_PluginInfo* info)
@@ -77,7 +76,6 @@ NDI_CameraControl_CHOP::NDI_CameraControl_CHOP(const OP_NodeInfo* info) : myNode
 	memset(source_names, 0, sizeof(source_names));
 	memset(source_ips, 0, sizeof(source_ips));
 
-
 	if (!NDIlib_initialize()) {
 		// Cannot run NDI. Most likely because the CPU is not sufficient (see SDK
 		// documentation). you can check this directly with a call to
@@ -113,15 +111,14 @@ bool
 NDI_CameraControl_CHOP::getOutputInfo(CHOP_OutputInfo* info, const OP_Inputs* inputs, void* reserved1)
 {
 	{
-		info->numChannels = 4;
-
+		info->numChannels = 24;
 		// Since we are outputting a timeslice, the system will dictate
 		// the numSamples and startIndex of the CHOP data
-		info->numSamples = 0;
+		info->numSamples = 1;
 		info->startIndex = 0;
 
 		// For illustration we are going to output 120hz data
-		//info->sampleRate = 60;
+		info->sampleRate = 25;
 		return true;
 	}
 }
@@ -132,8 +129,16 @@ NDI_CameraControl_CHOP::getChannelName(int32_t index, OP_String* name, const OP_
 	switch (index) {
 	case 0: {name->setString("abs_pan"); break; }
 	case 1: {name->setString("abs_tilt"); break; }
-	case 2: {name->setString("zoom"); break; }
-	case 3: {name->setString("focus"); break; }
+	case 2: {name->setString("abs_zoom"); break; }
+	case 3: {name->setString("abs_focus"); break; }
+	case 4: {name->setString("speed_pan"); break; }
+	case 5: {name->setString("speed_tilt"); break; }
+	case 6: {name->setString("speed_zoom"); break; }
+	case 7: {name->setString("speed_focus"); break; }
+	case 8: {name->setString("gain"); break; }
+	case 9: {name->setString("iris"); break; }
+	case 10: {name->setString("shutter_speed"); break; }
+	default: {name->setString("unknown_channel"); break; }
 	}
 }
 
@@ -144,11 +149,22 @@ NDI_CameraControl_CHOP::execute(CHOP_Output* output,
 {
 	myExecuteCount++;
 
+	inputs->enablePar("Absolutevalues", 1);
 	inputs->enablePar("Availablesources", 1);
+
+	inputs->enablePar("Speedpan", 1);
+	inputs->enablePar("Speedtilt", 1);
+	inputs->enablePar("Speedzoom", 1);
+	inputs->enablePar("Speedfocus", 1);
+
 	inputs->enablePar("Abspan", 1);
 	inputs->enablePar("Abstilt", 1);
 	inputs->enablePar("Abszoom", 1);
 	inputs->enablePar("Absfocus", 1);
+
+	inputs->enablePar("Gain", 1);
+	inputs->enablePar("Iris", 1);
+	inputs->enablePar("Shutterspeed", 1);
 
 	const char* selected_id = inputs->getParString("Availablesources");
 	double abs_pan_new = inputs->getParDouble("Abspan");
@@ -156,40 +172,87 @@ NDI_CameraControl_CHOP::execute(CHOP_Output* output,
 	double abs_zoom_new = inputs->getParDouble("Abszoom");
 	double abs_focus_new = inputs->getParDouble("Absfocus");
 
+	double speed_pan_new = inputs->getParDouble("Speedpan");
+	double speed_tilt_new = inputs->getParDouble("Speedtilt");
+	double speed_zoom_new = inputs->getParDouble("Speedzoom");
+	double speed_focus_new = inputs->getParDouble("Speedfocus");
+
+	double gain_new = inputs->getParDouble("Gain");
+	double iris_new = inputs->getParDouble("Iris");
+	double shutter_speed_new = inputs->getParDouble("Shutterspeed");
+
+	int current_mode = inputs->getParInt("Absolutevalues");
+
 	if ((char*)selected_id != selected_id_old) {
 		selected_id_old = (char*)selected_id;
 		ConnectByURL(selected_id);
 		printf("Selected source changed\n");
 		printf("Connecting to camera at %s\n", selected_id);
-
-	}
-	
-
-	{
-
-		if (abs_pan != abs_pan_new || abs_tilt != abs_tilt_new) {
-			abs_pan = abs_pan_new;
-			abs_tilt = abs_tilt_new;
-			NDIlib_recv_ptz_pan_tilt_speed(pNDI_recv, abs_pan, abs_tilt);
-		}
-		if (abs_zoom != inputs->getParDouble("Abszoom")) {
-			abs_zoom = abs_zoom_new;
-			NDIlib_recv_ptz_zoom(pNDI_recv, abs_zoom);
-		}
-		if (abs_focus != inputs->getParDouble("Absfocus")) {
-			abs_focus = abs_focus_new;
-			NDIlib_recv_ptz_focus(pNDI_recv, abs_focus);
-		}
 	}
 
 	{
-		output->channels[0][0] = abs_pan;
-		output->channels[1][0] = abs_tilt;
-		output->channels[2][0] = abs_zoom;
-		output->channels[3][0] = abs_focus;
+		// Speed Values
+		{
+			if (cam_data.speed_pan != speed_pan_new || cam_data.speed_tilt != speed_tilt_new) {
+				cam_data.speed_pan = speed_pan_new;
+				cam_data.speed_tilt = speed_tilt_new;
+				NDIlib_recv_ptz_pan_tilt_speed(pNDI_recv, cam_data.speed_pan, cam_data.speed_tilt);
+			}
+
+			if (cam_data.speed_zoom != inputs->getParDouble("Speedzoom")) {
+				cam_data.speed_zoom = speed_zoom_new;
+				NDIlib_recv_ptz_zoom_speed(pNDI_recv, cam_data.speed_zoom);
+			}
+
+			if (cam_data.abs_focus != inputs->getParDouble("Speedfocus")) {
+				cam_data.abs_focus = abs_focus_new;
+				NDIlib_recv_ptz_focus_speed(pNDI_recv, cam_data.speed_focus);
+			}
+		}
+
+		// Absolute values
+		{
+			if (cam_data.abs_pan != abs_pan_new || cam_data.abs_tilt != abs_tilt_new) {
+				cam_data.abs_pan = abs_pan_new;
+				cam_data.abs_tilt = abs_tilt_new;
+				NDIlib_recv_ptz_pan_tilt(pNDI_recv, cam_data.abs_pan, cam_data.abs_tilt);
+			}
+			if (cam_data.abs_zoom != inputs->getParDouble("Abszoom")) {
+				cam_data.abs_zoom = abs_zoom_new;
+				NDIlib_recv_ptz_zoom(pNDI_recv, cam_data.abs_zoom);
+			}
+			if (cam_data.abs_focus != inputs->getParDouble("Absfocus")) {
+				cam_data.abs_focus = abs_focus_new;
+				NDIlib_recv_ptz_focus(pNDI_recv, cam_data.abs_focus);
+			}
+		}
+
+		// Exposure values
+		{
+			if (cam_data.iris != iris_new || cam_data.gain != gain_new || cam_data.shutter_speed != shutter_speed_new) {
+				cam_data.gain = gain_new;
+				cam_data.iris = iris_new;
+				cam_data.shutter_speed = shutter_speed_new;
+				NDIlib_recv_ptz_exposure_manual_v2(pNDI_recv, cam_data.iris, cam_data.gain, cam_data.shutter_speed);
+			}
+		}
+
+		output->channels[0][0] = cam_data.abs_pan;
+		output->channels[1][0] = cam_data.abs_tilt;
+		output->channels[2][0] = cam_data.abs_zoom;
+		output->channels[3][0] = cam_data.abs_focus;
+		output->channels[4][0] = cam_data.speed_pan;
+		output->channels[5][0] = cam_data.speed_tilt;
+		output->channels[6][0] = cam_data.speed_zoom;
+		output->channels[7][0] = cam_data.speed_focus;
+		output->channels[8][0] = cam_data.gain;
+		output->channels[9][0] = cam_data.iris;
+		output->channels[10][0] = cam_data.shutter_speed;
+
 	}
 
 }
+
 
 int32_t
 NDI_CameraControl_CHOP::getNumInfoCHOPChans(void* reserved1)
@@ -251,7 +314,7 @@ NDI_CameraControl_CHOP::getInfoDATEntries(int32_t index,
 		snprintf(tempBuffer, sizeof(tempBuffer), "%d", myExecuteCount);
 #endif
 		entries->values[1]->setString(tempBuffer);
-	}
+}
 
 	if (index == 1)
 	{
@@ -286,77 +349,227 @@ NDI_CameraControl_CHOP::setupParameters(OP_ParameterManager* manager, void* rese
 			num_of_sources++;
 		}
 
+		sp.page = "Camera Controls";
+
 		OP_ParAppendResult res = manager->appendStringMenu(sp, num_of_sources, source_ips, source_names);
 		assert(res == OP_ParAppendResult::Success);
 	}
-
+	// ABSOLUTE VALUES MODE
 	{
-		OP_NumericParameter	np;
+		{
+			OP_NumericParameter	np;
 
-		np.name = "Abspan";
-		np.label = "Absolute Pan";
-		np.defaultValues[0] = 1.0;
-		np.minSliders[0] = -1.0;
-		np.maxSliders[0] = 1.0;
+			np.name = "Abspan";
+			np.label = "Absolute Pan";
 
-		OP_ParAppendResult res = manager->appendFloat(np);
-		assert(res == OP_ParAppendResult::Success);
+			np.defaultValues[0] = 0.0;
+			np.minSliders[0] = -1.0;
+			np.maxSliders[0] = 1.0;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Abstilt";
+			np.label = "Absolute Tilt";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = -1.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Abszoom";
+			np.label = "Absolute Zoom";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = 0.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Absfocus";
+			np.label = "Absolute Focus";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = 0.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
 	}
 
+	// SPEED VALUES MODE
+	{
+		{
+			OP_NumericParameter	np;
+
+			np.name = "Speedpan";
+			np.label = "Pan Speed";
+
+			np.defaultValues[0] = 0.0;
+			np.minSliders[0] = -1.0;
+			np.maxSliders[0] = 1.0;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Speedtilt";
+			np.label = "Tilt Speed";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = -1.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Speedzoom";
+			np.label = "Zoom Speed";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = -1.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Speedfocus";
+			np.label = "Focus Speed";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = -1.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		// EXPOSURE SETTINGS
+		{
+			OP_NumericParameter np;
+
+			np.name = "Gain";
+			np.label = "Gain";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = 0.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Iris";
+			np.label = "Iris";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = 0.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+
+		{
+			OP_NumericParameter np;
+
+			np.name = "Shutterspeed";
+			np.label = "Shutter Speed";
+
+			np.defaultValues[0] = 0.;
+			np.minSliders[0] = 0.;
+			np.maxSliders[0] = 1.;
+
+			np.page = "Camera Controls";
+
+			OP_ParAppendResult res = manager->appendFloat(np);
+			assert(res == OP_ParAppendResult::Success);
+		}
+	}
+
+	// Update sources
+	// Disabled since it's impossible to update GUI values without CHOP Re-Init
+	//{
+	//	OP_NumericParameter np;
+
+	//	np.name = "Updatesources";
+	//	np.label = "Update Sources";
+
+	//	np.defaultValues[0] = 1;
+
+	//	np.page = "Camera Controls";
+
+	//	OP_ParAppendResult res = manager->appendPulse(np);
+	//	assert(res == OP_ParAppendResult::Success);
+	//}
+
+	// Absolute values <-> Value Change Speed MODE switch
+	/*
 	{
 		OP_NumericParameter np;
 
-		np.name = "Abstilt";
-		np.label = "Absolute Tilt";
+		np.name = "Absolutevalues";
+		np.label = "Absolute Values";
 
-		np.defaultValues[0] = 0.;
-		np.minSliders[0] = -1.;
-		np.maxSliders[0] = 1.;
+		np.defaultValues[0] = 1;
 
-		OP_ParAppendResult res = manager->appendFloat(np);
+		np.page = "Camera Controls";
+
+		OP_ParAppendResult res = manager->appendToggle(np);
 		assert(res == OP_ParAppendResult::Success);
 	}
-
-	{
-		OP_NumericParameter np;
-
-		np.name = "Abszoom";
-		np.label = "Absolute Zoom";
-
-		np.defaultValues[0] = 0.;
-		np.minSliders[0] = 0.;
-		np.maxSliders[0] = 1.;
-
-		OP_ParAppendResult res = manager->appendFloat(np);
-		assert(res == OP_ParAppendResult::Success);
-	}
-
-	{
-		OP_NumericParameter np;
-
-		np.name = "Absfocus";
-		np.label = "Absolute Focus";
-
-		np.defaultValues[0] = 0.;
-		np.minSliders[0] = 0.;
-		np.maxSliders[0] = 1.;
-
-		OP_ParAppendResult res = manager->appendFloat(np);
-		assert(res == OP_ParAppendResult::Success);
-	}
-
-	{
-		OP_NumericParameter np;
-
-		np.name = "Updatesources";
-		np.label = "Update Sources";
-
-		np.defaultValues[0] = 0;
-
-		OP_ParAppendResult res = manager->appendPulse(np);
-		assert(res == OP_ParAppendResult::Success);
-	}
-
+	*/
 }
 
 void
@@ -391,7 +604,7 @@ NDI_CameraControl_CHOP::UpdateSources() {
 }
 
 void NDI_CameraControl_CHOP::ConnectByURL(const char* camera_url) {
-	NDIlib_source_t ndi_source = {"Custom source", camera_url};
+	NDIlib_source_t ndi_source = { "Custom source", camera_url };
 	NDIlib_source_t* p_ndi_source = &ndi_source;
 
 	NDI_recv_create_desc.source_to_connect_to = ndi_source;
@@ -403,7 +616,7 @@ void NDI_CameraControl_CHOP::ConnectByURL(const char* camera_url) {
 }
 
 void NDI_CameraControl_CHOP::ConnectByID(int id) {
-	
+
 	UpdateSources();
 
 	NDI_recv_create_desc.source_to_connect_to = p_sources[id];
