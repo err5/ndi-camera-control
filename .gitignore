@@ -1,0 +1,16 @@
+# Everything else
+*
+
+# Usefull crap
+!*.cpp
+!*.h
+
+# Meaningful crap
+!README.md
+
+# VS Crap
+!*.sln
+!*.vcxproj
+
+# git crap
+.gitignore
